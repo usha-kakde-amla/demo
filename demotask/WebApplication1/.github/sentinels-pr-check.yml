@@ -28,11 +28,11 @@ jobs:
         run: npm install minimist
 
       # ── Pull pr-analyzer.js + rules from your Sentinels repo ──
-      # CHANGE THIS: replace YOUR_GITHUB_USERNAME with your actual GitHub username
+      # CHANGE THIS: replace usha-kakde-amla with your actual GitHub username
       - name: Download Sentinels analyzer
         run: |
           curl -fsSL \
-            "https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/sentinels-code-Analyzer/main/pr-analyzer.js" \
+            "https://raw.githubusercontent.com/usha-kakde-amla/sentinels-code-Analyzer/main/pr-analyzer.js" \
             -o pr-analyzer.js
 
       - name: Download Sentinels rules
