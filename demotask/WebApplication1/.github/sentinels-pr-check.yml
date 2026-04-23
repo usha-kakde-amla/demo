@@ -1,0 +1,112 @@
+﻿name: 🛡️ Sentinels Code Analysis
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  sentinels-analysis:
+    name: Run Sentinels Rules
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install minimist
+        run: npm install minimist
+
+      # ── Pull pr-analyzer.js + rules from your Sentinels repo ──
+      # CHANGE THIS: replace YOUR_GITHUB_USERNAME with your actual GitHub username
+      - name: Download Sentinels analyzer
+        run: |
+          curl -fsSL \
+            "https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/sentinels-code-Analyzer/main/pr-analyzer.js" \
+            -o pr-analyzer.js
+
+      - name: Download Sentinels rules
+        run: |
+          mkdir -p rules
+          for rule in Security Vulnerability Performance Javascript Typescript SQL CSHTML; do
+            curl -fsSL \
+              "https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/sentinels-code-Analyzer/main/rules/${rule}.json" \
+              -o "rules/${rule}.json" \
+              && echo "✅ ${rule}.json" \
+              || echo "⚠️  Skipped ${rule}.json"
+          done
+
+      # ── Generate diff of only changed lines in this PR ─────────
+      - name: Generate PR diff
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          git diff origin/${{ github.base_ref }}...HEAD > pr.diff
+          echo "Lines in diff: $(wc -l < pr.diff)"
+
+      # ── Run your rules engine against the diff ──────────────────
+      - name: Run Sentinels analysis
+        env:
+          RULES_DIR: ./rules
+        run: |
+          node pr-analyzer.js \
+            --diff pr.diff \
+            --output analysis-report.json \
+            --comment pr-comment.md
+        continue-on-error: true
+
+      # ── Post result as PR comment (updates on re-push, no spam) ─
+      - name: Post PR comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const body = fs.existsSync('pr-comment.md')
+              ? fs.readFileSync('pr-comment.md', 'utf8')
+              : '## 🛡️ Sentinels Code Analysis\n\n✅ No issues found.';
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Sentinels Code Analysis')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      # ── Fail the check if any ERROR-severity rules triggered ────
+      - name: Fail on errors
+        run: |
+          ERRORS=$(node -e "
+            const r = require('./analysis-report.json');
+            console.log(r.filter(i => i.severity.toLowerCase() === 'error').length);
+          " 2>/dev/null || echo "0")
+          echo "Errors found: $ERRORS"
+          [ "$ERRORS" -gt "0" ] && exit 1 || exit 0
